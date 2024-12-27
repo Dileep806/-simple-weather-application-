@@ -1,0 +1,144 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <curl/curl.h>
+#include <cjson/cJSON.h>
+
+// Max buffer size for weather data
+#define MAX_BUFFER_SIZE 2048
+#define MAX_CITY_NAME_LEN 100
+#define API_KEY "YOUR_API_KEY"  // Replace with your OpenWeatherMap API key
+
+// Struct to hold weather data for a city
+typedef struct {
+    char city[MAX_CITY_NAME_LEN];
+    double temperature;
+    double humidity;
+    double wind_speed;
+    char description[100];
+} WeatherData;
+
+// Function to handle the response data from libcurl
+size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    char *data = (char *)userp;
+
+    strcat(data, contents);
+    return realsize;
+}
+
+// Function to make a request to the OpenWeatherMap API
+void get_weather_data(const char *url, char *response_data) {
+    CURL *curl;
+    CURLcode res;
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, response_data);
+
+        res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            fprintf(stderr, "Error fetching data: %s\n", curl_easy_strerror(res));
+        }
+
+        curl_easy_cleanup(curl);
+    }
+
+    curl_global_cleanup();
+}
+
+// Function to parse the weather data from the OpenWeatherMap response
+int parse_weather_data(const char *json_data, WeatherData *weather) {
+    cJSON *json = cJSON_Parse(json_data);
+    if (json == NULL) {
+        printf("Error parsing JSON data\n");
+        return -1;
+    }
+
+    cJSON *weather_array = cJSON_GetObjectItemCaseSensitive(json, "weather");
+    cJSON *weather_item = cJSON_GetArrayItem(weather_array, 0);
+    cJSON *description = cJSON_GetObjectItemCaseSensitive(weather_item, "description");
+
+    cJSON *main_data = cJSON_GetObjectItemCaseSensitive(json, "main");
+    cJSON *temp = cJSON_GetObjectItemCaseSensitive(main_data, "temp");
+    cJSON *humidity = cJSON_GetObjectItemCaseSensitive(main_data, "humidity");
+
+    cJSON *wind_data = cJSON_GetObjectItemCaseSensitive(json, "wind");
+    cJSON *wind_speed = cJSON_GetObjectItemCaseSensitive(wind_data, "speed");
+
+    if (cJSON_IsString(description) && description->valuestring != NULL) {
+        strncpy(weather->description, description->valuestring, sizeof(weather->description) - 1);
+    }
+
+    if (cJSON_IsNumber(temp)) {
+        weather->temperature = temp->valuedouble - 273.15;  // Convert from Kelvin to Celsius
+    }
+
+    if (cJSON_IsNumber(humidity)) {
+        weather->humidity = humidity->valuedouble;
+    }
+
+    if (cJSON_IsNumber(wind_speed)) {
+        weather->wind_speed = wind_speed->valuedouble;
+    }
+
+    cJSON_Delete(json);
+    return 0;
+}
+
+// Function to display weather data
+void display_weather_data(const WeatherData *weather) {
+    printf("Weather Information for %s:\n", weather->city);
+    printf("Description: %s\n", weather->description);
+    printf("Temperature: %.2f°C\n", weather->temperature);
+    printf("Humidity: %.0f%%\n", weather->humidity);
+    printf("Wind Speed: %.2f m/s\n", weather->wind_speed);
+}
+
+// Function to fetch weather data for a given city
+void fetch_and_display_weather(const char *city) {
+    char url[MAX_CITY_NAME_LEN + 200];
+    char response_data[MAX_BUFFER_SIZE] = "";
+    WeatherData weather;
+
+    snprintf(url, sizeof(url), "https://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s", city, API_KEY);
+    get_weather_data(url, response_data);
+
+    if (parse_weather_data(response_data, &weather) == 0) {
+        strncpy(weather.city, city, sizeof(weather.city) - 1);
+        display_weather_data(&weather);
+    } else {
+        printf("Failed to retrieve weather data for %s.\n", city);
+    }
+}
+
+// Function to handle user input for city names and fetch weather data
+void handle_user_input() {
+    char city[MAX_CITY_NAME_LEN];
+
+    printf("Enter city name (or 'exit' to quit): ");
+    while (fgets(city, sizeof(city), stdin)) {
+        city[strcspn(city, "\n")] = 0;  // Remove newline character
+
+        if (strcmp(city, "exit") == 0) {
+            break;
+        }
+
+        fetch_and_display_weather(city);
+        printf("\nEnter another city (or 'exit' to quit): ");
+    }
+}
+
+int main() {
+    printf("Welcome to the Weather App\n");
+
+    // Start the user input loop
+    handle_user_input();
+
+    printf("Thank you for using the Weather App!\n");
+    return 0;
+}
